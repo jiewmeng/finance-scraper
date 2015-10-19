@@ -10,35 +10,52 @@ let parseBody = require('co-body');
 const SEARCH_URL = 'http://www.reuters.com/finance/stocks/lookup?searchType=any&comSortBy=marketcap&sortBy=&dateRange=&search=';
 const PROFILE_URL = 'http://www.reuters.com/finance/stocks/companyProfile?symbol=';
 
-let searchesQueries = [
-	// 'DBSM.SI',
-	// 'OSIM',
-	// 'UNITED OVERSEAS BANK LTD'
-];
-
 let reqAsync = Promise.promisify(req);
 
 let scrapeForProfile = function(searchQuery) {
 	let searchUrl = SEARCH_URL + searchQuery;
-	// console.log(`DEBUG: requesting ${searchUrl}`);
 
 	return reqAsync(SEARCH_URL + searchQuery)
 		.spread((res, body) => {
 			let $ = cheerio.load(body);
-			let stockTickers = $('.search-table-data tr:nth-child(n+2) td:nth-child(2)').map(function() {
-				return $(this).text();
+			let stockTickers = $('.search-table-data tr:nth-child(n+2)').map(function() {
+				let $this = $(this);
+				return {
+					name: $this.find('td:nth-child(1)').text(),
+					ticker: $this.find('td:nth-child(2)').text(),
+				};
 			}).toArray();
 
-			if (stockTickers.length > 1) {
-				console.warn('Found more than 1 match for ' + searchQuery + '. ' + stockTickers.join(', '));
-			} else if (stockTickers < 1) {
-				console.warn('Cannot find match for ' + searchQuery);
+			// if (stockTickers.length > 1) {
+			// 	console.warn('Found more than 1 match for ' + searchQuery + '. ' + stockTickers.join(', '));
+			// } else if (stockTickers < 1) {
+			// 	console.warn('Cannot find match for ' + searchQuery);
+			// 	return Promise.resolve([false]);
+			// }
+
+			if (stockTickers.length < 1) {
 				return Promise.resolve([false]);
 			}
 
-			return reqAsync(PROFILE_URL + stockTickers[0]);
+			// attempt to find something with at least 1st word match
+			let firstWord = searchQuery.split(' ')[0].toLowerCase();
+			let firstWordMatch = false;
+			let ticker = stockTickers.reduce(function(val, currVal, index) {
+				if (val) return val;
+				let currFirstWord = currVal.name.split(' ')[0].toLowerCase();
+				if (firstWord === currFirstWord) {
+					firstWordMatch = true;
+					return currVal.ticker;
+				}
+			}, undefined);
+
+			var url = PROFILE_URL + (ticker || stockTickers[0].ticker);
+			return reqAsync(url)
+				.spread((res, body) => {
+					return Promise.all([ res, body, url, firstWordMatch ]);
+				});
 		})
-		.spread((res, body) => {
+		.spread((res, body, url, firstWordMatch) => {
 			if (res === false) return {search: searchQuery, name: '', profile: ''};
 
 			let $ = cheerio.load(body);
@@ -48,7 +65,9 @@ let scrapeForProfile = function(searchQuery) {
 			return {
 				search: searchQuery,
 				name: name,
-				profile: profile
+				profile: profile,
+				url: url,
+				firstWordMatch: firstWordMatch
 			};
 		});
 };
